@@ -82,4 +82,122 @@ assert.throws(
 );
 check('sandbox mode without credentials fails loudly, never silently', () => {});
 
+// 9. Sandbox adapter — the full Checkout approval sequence, with the PayPal
+// HTTP layer stubbed (no network, no real credentials). This is the flow
+// that failed live on 2026-11-09 with PayPal's 422 ORDER_NOT_APPROVED:
+// create -> capture is illegal until the payer approves the order.
+const { SandboxPayPal, OrderNotApprovedError } = await import('../src/paypal.mjs');
+const fakeResponse = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+  text: async () => JSON.stringify(body),
+});
+let payerApproved = false;
+let sandboxCreates = 0;
+let sandboxCaptures = 0;
+const stubLinks = [
+  { rel: 'self', href: 'https://api-m.sandbox.paypal.com/v2/checkout/orders/STUB-ORDER-1' },
+  { rel: 'approve', href: 'https://www.sandbox.paypal.com/checkoutnow?token=STUB-ORDER-1' },
+  { rel: 'capture', href: 'https://api-m.sandbox.paypal.com/v2/checkout/orders/STUB-ORDER-1/capture' },
+];
+const fakeFetch = async (url, opts = {}) => {
+  const path = new URL(url).pathname;
+  if (path === '/v1/oauth2/token') {
+    return fakeResponse(200, { access_token: 'stub-token', expires_in: 3600 });
+  }
+  if (path === '/v2/checkout/orders' && opts.method === 'POST') {
+    sandboxCreates++;
+    const payload = JSON.parse(opts.body);
+    assert.equal(payload.intent, 'CAPTURE');
+    assert.ok(payload.application_context.return_url.endsWith('/gift/return'), 'return_url must point at /gift/return');
+    assert.ok(payload.application_context.cancel_url.endsWith('/gift/cancel'), 'cancel_url must point at /gift/cancel');
+    return fakeResponse(201, { id: 'STUB-ORDER-1', status: 'CREATED', links: stubLinks });
+  }
+  if (path === '/v2/checkout/orders/STUB-ORDER-1' && opts.method === 'GET') {
+    return fakeResponse(200, { id: 'STUB-ORDER-1', status: payerApproved ? 'APPROVED' : 'CREATED', links: stubLinks });
+  }
+  if (path === '/v2/checkout/orders/STUB-ORDER-1/capture' && opts.method === 'POST') {
+    sandboxCaptures++;
+    if (!payerApproved) {
+      return fakeResponse(422, { name: 'UNPROCESSABLE_ENTITY', details: [{ issue: 'ORDER_NOT_APPROVED' }] });
+    }
+    return fakeResponse(201, {
+      id: 'STUB-ORDER-1', status: 'COMPLETED',
+      purchase_units: [{ payments: { captures: [{ id: 'STUB-CAPTURE-1', status: 'COMPLETED' }] } }],
+    });
+  }
+  throw new Error(`Unexpected stubbed request: ${opts.method} ${url}`);
+};
+const sandboxLog = new TransparencyLog(null); // in-memory
+const sandboxPayPal = new SandboxPayPal({ clientId: 'stub-id', clientSecret: 'stub-secret', fetchImpl: fakeFetch });
+const sandboxTreasury = new Treasury({ paypal: sandboxPayPal, log: sandboxLog });
+
+// 9a. The terms refusal fires BEFORE any PayPal call — no order is created.
+await assert.rejects(
+  () => sandboxTreasury.beginGift({ amountCents: 20000, donorName: 'x', termsAccepted: false, termsVersion: GIFT_TERMS_VERSION }),
+  /never an investment/
+);
+check('sandbox: terms refusal happens before any PayPal order is created', () => {
+  assert.equal(sandboxCreates, 0);
+});
+
+// 9b. Initiation creates the order and hands back the approve URL — and
+// that is all. No capture, no log entry, no balance.
+const begun = await sandboxTreasury.beginGift({
+  amountCents: 20000, donorName: 'a supporter', termsAccepted: true, termsVersion: GIFT_TERMS_VERSION,
+  returnUrl: 'https://example.test/gift/return', cancelUrl: 'https://example.test/gift/cancel',
+});
+check('sandbox: gift begins pending payer approval — nothing logged, nothing credited', () => {
+  assert.equal(begun.status, 'pending_payer_approval');
+  assert.equal(begun.approvalUrl, 'https://www.sandbox.paypal.com/checkoutnow?token=STUB-ORDER-1');
+  assert.equal(sandboxLog.entries.length, 0);
+  assert.equal(sandboxTreasury.balanceCents(), 0);
+  assert.equal(sandboxCaptures, 0);
+});
+
+// 9c. Capture before approval is refused by OUR code path — the PayPal
+// capture endpoint is never even called (PayPal's 422 stays unneeded).
+await assert.rejects(
+  () => sandboxTreasury.completeGift({ orderId: begun.orderId }),
+  (err) => err.code === 'ORDER_NOT_APPROVED'
+);
+await assert.rejects(() => sandboxPayPal.captureGift(begun.orderId), OrderNotApprovedError);
+check('sandbox: capture before payer approval is refused by our own code', () => {
+  assert.equal(sandboxCaptures, 0);
+  assert.equal(sandboxLog.entries.length, 0);
+});
+
+// 9d. The payer approves on PayPal's hosted page and returns: now capture
+// is legal, and only now is the gift recorded and the balance credited.
+payerApproved = true;
+const completedGift = await sandboxTreasury.completeGift({ orderId: begun.orderId });
+check('sandbox: after payer approval, capture records the gift and credits the balance', () => {
+  assert.equal(completedGift.type, 'gift_received');
+  assert.equal(completedGift.paypalCaptureId, 'STUB-CAPTURE-1');
+  assert.equal(sandboxTreasury.balanceCents(), 20000);
+  assert.equal(sandboxCaptures, 1);
+  assert.equal(sandboxLog.verify().ok, true);
+});
+
+// 9e. A refreshed return URL cannot capture or credit the same gift twice.
+await assert.rejects(() => sandboxTreasury.completeGift({ orderId: begun.orderId }), /No pending gift/);
+check('sandbox: a completed gift cannot be captured or credited twice', () => {
+  assert.equal(sandboxCaptures, 1);
+  assert.equal(sandboxLog.entries.filter((e) => e.type === 'gift_received').length, 1);
+});
+
+// 9f. A payer who cancels at PayPal leaves nothing behind.
+payerApproved = false;
+const begun2 = await sandboxTreasury.beginGift({
+  amountCents: 500, donorName: 'x', termsAccepted: true, termsVersion: GIFT_TERMS_VERSION,
+  returnUrl: 'https://example.test/gift/return', cancelUrl: 'https://example.test/gift/cancel',
+});
+sandboxTreasury.cancelGift({ orderId: begun2.orderId });
+await assert.rejects(() => sandboxTreasury.completeGift({ orderId: begun2.orderId }), /No pending gift/);
+check('sandbox: a payer-cancelled gift is forgotten and never recorded', () => {
+  assert.equal(sandboxLog.entries.filter((e) => e.type === 'gift_received').length, 1);
+  assert.equal(sandboxTreasury.balanceCents(), 20000);
+});
+
 console.log(`\nAll ${n} checks passed. The demo flow works end to end.`);
