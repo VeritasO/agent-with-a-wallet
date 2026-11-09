@@ -19,9 +19,16 @@ const show = (el, ok, text) => {
 async function initGiftPage() {
   const { terms } = await (await fetch('/api/terms')).json();
   $('#terms').textContent = terms;
+  const msg = $('#gift-msg');
+  // Landing states from PayPal's payer return/cancel redirects.
+  const landed = new URLSearchParams(location.search).get('gift');
+  if (landed === 'cancelled') {
+    show(msg, false, 'Gift cancelled at PayPal — nothing was recorded and nothing was charged.');
+  } else if (landed === 'error') {
+    show(msg, false, new URLSearchParams(location.search).get('reason') || 'The gift could not be completed.');
+  }
   $('#gift-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const msg = $('#gift-msg');
     const form = new FormData(e.target);
     try {
       const data = await post('/api/gifts', {
@@ -30,6 +37,14 @@ async function initGiftPage() {
         termsAccepted: form.get('termsAccepted') === 'on',
         termsVersion: 'gift-terms-v1-2026-10-29',
       });
+      if (data.approvalUrl) {
+        // Sandbox Checkout: the gift exists only as a PayPal order until
+        // the payer approves it on PayPal's hosted page. Send them there;
+        // PayPal returns them to /gift/return, where capture happens.
+        show(msg, true, 'Taking you to PayPal (sandbox) to approve your gift…');
+        window.location.href = data.approvalUrl;
+        return;
+      }
       show(msg, true, `Gift recorded — log entry #${data.entry.seq}. Thank you. ` +
         'Nothing is promised back but this thanks, and the log now shows your gift to anyone.');
     } catch (err) {
