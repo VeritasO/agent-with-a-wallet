@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent console — conscience treasury</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <nav><a href="/">Give</a><a href="/console">Agent console</a><a href="/log">Transparency log</a></nav>
+  <h1>Agent console</h1>
+  <p class="sub">This is what the agent sees — and where the human gate lives.
+  The agent may spend on its own only inside the standing spend order and below
+  the threshold. Everything else stops here and waits for a named human.</p>
+
+  <div class="card">
+    <p>Balance: <strong id="balance">…</strong> ·
+    Autonomous threshold: <strong id="threshold">…</strong> ·
+    PayPal mode: <span class="pill" id="mode">…</span> ·
+    Log chain: <span class="pill" id="chain">…</span></p>
+  </div>
+
+  <div class="card">
+    <h2>The agent requests a payout</h2>
+    <form id="payout-form">
+      <label>Amount (USD)
+        <input name="amount" type="number" min="0.01" step="0.01" value="12.00" required>
+      </label>
+      <label>Purpose (the standing spend order)
+        <select name="purposeCategory">
+          <option value="ai_credits">1 · AI credits (LLM inference)</option>
+          <option value="hosting_infrastructure">2 · Hosting &amp; infrastructure</option>
+          <option value="other">3 · Anything else — always human-gated</option>
+        </select>
+      </label>
+      <label>Recipient (PayPal email)
+        <input name="recipientEmail" type="email" value="billing@example-provider.test" required>
+      </label>
+      <label>Note
+        <input name="note" value="Monthly AI credit top-up">
+      </label>
+      <button type="submit">Agent: request payout</button>
+      <div class="msg" id="payout-msg"></div>
+    </form>
+    <p>Try it twice: a small AI-credits payout executes on its own, logged.
+    Then request $100 — or pick “anything else” at any amount — and watch it stop.</p>
+  </div>
+
+  <div class="card">
+    <h2>Waiting at the gate</h2>
+    <div id="pending"><p>Nothing waiting.</p></div>
+  </div>
+
+  <footer>The gate is the product: autonomy below the line, a named human above it,
+  and the <a href="/log">log</a> remembers both.</footer>
+</main>
+<script src="/app.js"></script>
+<script>initConsolePage();</script>
+</body>
+</html>

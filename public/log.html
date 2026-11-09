@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transparency log — conscience treasury</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <nav><a href="/">Give</a><a href="/console">Agent console</a><a href="/log">Transparency log</a></nav>
+  <h1>The public transparency log</h1>
+  <p class="sub">Append-only and hash-chained: every gift, payout, approval and denial,
+  in order, forever. An edited history would break the chain — and anyone can check.
+  Machine-readable at <a href="/api/log">/api/log</a>.</p>
+  <div class="card">
+    <p>Balance: <strong id="balance">…</strong> · Chain verification: <span class="pill" id="chain">…</span></p>
+    <table>
+      <thead><tr><th>#</th><th>When</th><th>Event</th><th>Detail</th><th>Hash</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <footer>Radical transparency is the treasury’s standing rule (2026-10-17):
+  what arrived, what it funded, who approved what — inspectable by anyone.</footer>
+</main>
+<script src="/app.js"></script>
+<script>initLogPage();</script>
+</body>
+</html>
