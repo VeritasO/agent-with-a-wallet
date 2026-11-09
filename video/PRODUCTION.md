@@ -151,3 +151,24 @@ $200 gift the walk is exactly the script's beats.
   mock pill) before the take.
 - Keep the mode pill / "sandbox — no real money" text in frame;
   approver name typed on camera: "Adrian Gibson".
+
+## Addendum — 2026-11-09, sandbox gift-flow repair (script-beat change only)
+
+The live sandbox run exposed a real defect: the gift flow captured a
+Checkout order that the payer had never approved (PayPal 422
+ORDER_NOT_APPROVED). It is repaired — see
+`docs/sandbox-flow-repair-20261109.md`. What changes on recording day:
+
+- **The gift beat (0:20–1:10) gains a PayPal detour in sandbox mode:**
+  submit → redirect to PayPal's sandbox approval page → sign in as the
+  sandbox personal (buyer) test account → approve → PayPal returns to
+  the app → capture → log entry. One browser, one sitting, same donor.
+- **Narration is NOT re-recorded:** the five existing segments stand —
+  seg2's window (50s) absorbs the detour as screen time; the VO never
+  described the click path. Captions (23 cues, draft timing) may need a
+  small re-time inside seg2's window at final edit; no text changes.
+- `video/capture.mjs` drives the **mock** flow, which is unchanged
+  (mock approval is instant, no redirect) — its gift shots remain valid
+  for a mock take. A sandbox take is walked by hand per the beats in
+  `docs/demo-script.md`; expect a "pending payer approval" moment and a
+  $0.00 balance until the return — that pause is the honest shot, keep it.
