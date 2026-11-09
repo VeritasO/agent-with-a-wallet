@@ -26,6 +26,7 @@
 //   3. other                 — never autonomous; always human-gated
 
 import { createHash } from 'node:crypto';
+import { OrderNotApprovedError } from './paypal.mjs';
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -112,12 +113,30 @@ export class Treasury {
     this.log = log;
     this.approvalThresholdCents = approvalThresholdCents;
     this.pendingPayouts = new Map(); // payoutId -> record (not yet executed)
+    this.pendingGifts = new Map(); // orderId -> gift awaiting payer approval
   }
 
   // ---- Money in -----------------------------------------------------------
   // A gift is recorded ONLY with the donor's attestation to the current
   // terms version. No attestation, no gift — the terms are code, not copy.
-  async receiveGift({ amountCents, donorName = 'anonymous', termsAccepted, termsVersion }) {
+  // The attestation check runs BEFORE any PayPal call: a refused gift
+  // never creates an order.
+  //
+  // A Checkout gift is two steps, because PayPal's is:
+  //   beginGift()    — terms gate, then create the order. If PayPal returns
+  //                    an approve URL (sandbox), the gift is ONLY pending:
+  //                    nothing is logged, the balance does not move. The
+  //                    donor still has to approve on PayPal's hosted page.
+  //                    If there is no approve URL (mock — the simulated
+  //                    payer approves instantly), capture + record at once.
+  //   completeGift() — called when the payer returns approved. Reads the
+  //                    order back; unless PayPal says APPROVED it refuses
+  //                    (ORDER_NOT_APPROVED) and captures nothing. Only a
+  //                    successful capture writes `gift_received` and
+  //                    credits the balance.
+  //   cancelGift()   — the payer abandoned approval: forget the pending
+  //                    gift. Nothing was ever logged or credited.
+  async beginGift({ amountCents, donorName = 'anonymous', termsAccepted, termsVersion, returnUrl, cancelUrl }) {
     assertPositiveCents(amountCents);
     if (termsAccepted !== true || termsVersion !== GIFT_TERMS_VERSION) {
       const err = new Error(
@@ -128,17 +147,68 @@ export class Treasury {
       err.code = 'TERMS_NOT_ACCEPTED';
       throw err;
     }
-    const order = await this.paypal.createGiftOrder({ amountCents, donorName });
-    const capture = await this.paypal.captureGift(order.orderId);
+    const order = await this.paypal.createGiftOrder({ amountCents, donorName, returnUrl, cancelUrl });
+    const record = {
+      orderId: order.orderId,
+      amountCents,
+      donorName: donorName || 'anonymous',
+      termsVersion,
+    };
+    if (order.approvalUrl) {
+      this.pendingGifts.set(order.orderId, {
+        ...record, status: 'pending_payer_approval', createdAt: new Date().toISOString(),
+      });
+      return { status: 'pending_payer_approval', orderId: order.orderId, approvalUrl: order.approvalUrl };
+    }
+    return { status: 'completed', entry: await this._captureAndRecord(record) };
+  }
+
+  async completeGift({ orderId }) {
+    const record = this.pendingGifts.get(orderId);
+    if (!record) throw new Error(`No pending gift for order: ${orderId}`);
+    if (typeof this.paypal.getGiftOrder === 'function') {
+      const detail = await this.paypal.getGiftOrder(orderId);
+      if (detail.status === 'COMPLETED') {
+        // Already captured (e.g. a refreshed return URL): never credit twice.
+        this.pendingGifts.delete(orderId);
+        throw new Error(`Gift for order ${orderId} was already captured; refusing to record it twice.`);
+      }
+      if (detail.status !== 'APPROVED') throw new OrderNotApprovedError(orderId);
+    }
+    const entry = await this._captureAndRecord(record);
+    this.pendingGifts.delete(orderId);
+    return entry;
+  }
+
+  cancelGift({ orderId }) {
+    if (!this.pendingGifts.delete(orderId)) throw new Error(`No pending gift for order: ${orderId}`);
+    return { status: 'cancelled', orderId };
+  }
+
+  async _captureAndRecord({ orderId, amountCents, donorName, termsVersion }) {
+    const capture = await this.paypal.captureGift(orderId);
+    if (capture.status !== 'COMPLETED') {
+      throw new Error(`Gift capture did not complete for order ${orderId} (status: ${capture.status}). Nothing recorded.`);
+    }
     return this.log.append('gift_received', {
       amountCents,
       currency: 'USD',
       donorNameForm: donorName || 'anonymous', // named only as the donor wishes
       termsVersion,
-      paypalOrderId: order.orderId,
+      paypalOrderId: orderId,
       paypalCaptureId: capture.captureId,
       paypalMode: this.paypal.mode,
     });
+  }
+
+  // Backwards-compatible single-call form: with the mock adapter (instant
+  // payer approval) it returns the `gift_received` log entry, as before.
+  // With the sandbox adapter it returns the pending-approval result —
+  // the gift is not recorded until completeGift() runs after the payer
+  // returns approved.
+  async receiveGift(input) {
+    const begun = await this.beginGift(input);
+    return begun.status === 'completed' ? begun.entry : begun;
   }
 
   // ---- Money out ----------------------------------------------------------
