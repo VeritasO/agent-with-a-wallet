@@ -99,7 +99,8 @@ in the real system — the hackathon entry is its public, inspectable proof.
   (full disclosure: `docs/ai-tools-disclosure.md`, also in the repo)
 
 ## Try it out / links — fill in after accounts land
-- Public repo: [GitHub URL — after 80 pushes the local repo to his account]
+- Public repo: https://github.com/VeritasO/agent-with-a-wallet
+  (public since 2026-11-09; MIT license; README carries run instructions)
 - Demo video: [YouTube URL — after upload; script is `docs/demo-script.md`, ~2:35 of a 3:00 cap]
 - The live system this came from: https://vcin.vercel.app
 
