@@ -1,0 +1,1 @@
+{"description":"An agent with a wallet and a conscience — gift-only intake, a public append-only transparency log, and human-gated payouts, built on PayPal sandbox.","engines":{"node":">=20"},"license":"MIT","name":"conscience-treasury","scripts":{"start":"node src/server.mjs","test":"node test/run-tests.mjs"},"type":"module","version":"0.1.0"}
