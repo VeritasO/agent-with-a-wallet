@@ -5,6 +5,13 @@
 //   /log         the public transparency log (HTML) — anyone can read it
 //   /api/log     the same log as JSON, with the chain verification result
 //   /api/gifts   POST { amountCents, donorName, termsAccepted, termsVersion }
+//                -> 201 + log entry (mock: payer approval is simulated), or
+//                   202 + { status: 'pending_payer_approval', approvalUrl }
+//                   (sandbox: the donor must approve on PayPal first)
+//   /gift/return GET  ?token=<orderId> — PayPal sends the approved payer
+//                   back here; only now is the order captured + logged
+//   /gift/cancel GET  ?token=<orderId> — payer abandoned approval; the
+//                   pending gift is forgotten, nothing was ever logged
 //   /api/payouts POST { amountCents, purposeCategory, recipientEmail, note }
 //                (this is the AGENT asking to spend — the gate decides)
 //   /api/payouts/:id/approve  POST { approverName }
@@ -30,6 +37,16 @@ const treasury = new Treasury({
   approvalThresholdCents: Number(process.env.APPROVAL_THRESHOLD_CENTS ?? 2500),
 });
 
+// The app's public base URL, for PayPal's payer return/cancel redirects.
+// PUBLIC_BASE_URL wins when set (e.g. https://agent-with-a-wallet.onrender.com);
+// otherwise derive it from the incoming request (works locally and behind
+// Render's proxy, which sets x-forwarded-proto).
+const publicBase = (req) => {
+  const configured = process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto'] ?? 'http';
+  return `${proto}://${req.headers.host}`;
+};
 const page = (name) => readFileSync(join(root, 'public', name), 'utf8');
 const json = (res, status, body) => {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -80,14 +97,40 @@ const server = createServer(async (req, res) => {
         balanceCents: treasury.balanceCents(),
         approvalThresholdCents: treasury.approvalThresholdCents,
         pendingPayouts: [...treasury.pendingPayouts.values()],
+        pendingGifts: [...treasury.pendingGifts.values()],
         purposes: PURPOSE_CATEGORIES,
         paypalMode: paypal.mode,
         verification: log.verify(),
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/gifts') {
-      const entry = await treasury.receiveGift(await readBody(req));
-      return json(res, 201, { ok: true, entry });
+      const base = publicBase(req);
+      const result = await treasury.beginGift({
+        ...(await readBody(req)),
+        returnUrl: `${base}/gift/return`,
+        cancelUrl: `${base}/gift/cancel`,
+      });
+      if (result.status === 'pending_payer_approval') {
+        // Sandbox: the donor leaves for PayPal's hosted approval page.
+        // Nothing is logged or credited until they return approved.
+        return json(res, 202, { ok: true, ...result });
+      }
+      return json(res, 201, { ok: true, entry: result.entry });
+    }
+    if (req.method === 'GET' && url.pathname === '/gift/return') {
+      // PayPal redirects the payer back here after approval, with
+      // ?token=<orderId>. Capture happens now — and only now.
+      const orderId = url.searchParams.get('token');
+      if (!orderId) throw new Error('Gift return is missing the PayPal order token.');
+      const entry = await treasury.completeGift({ orderId });
+      res.writeHead(302, { Location: `/log?gift=${entry.seq}` });
+      return res.end();
+    }
+    if (req.method === 'GET' && url.pathname === '/gift/cancel') {
+      const orderId = url.searchParams.get('token');
+      if (orderId && treasury.pendingGifts.has(orderId)) treasury.cancelGift({ orderId });
+      res.writeHead(302, { Location: '/?gift=cancelled' });
+      return res.end();
     }
     if (req.method === 'POST' && url.pathname === '/api/payouts') {
       const result = await treasury.requestPayout(await readBody(req));
@@ -103,7 +146,14 @@ const server = createServer(async (req, res) => {
     }
     json(res, 404, { error: 'not found' });
   } catch (err) {
-    json(res, err.code === 'TERMS_NOT_ACCEPTED' ? 422 : 400, { error: err.message, code: err.code ?? null });
+    const unprocessable = err.code === 'TERMS_NOT_ACCEPTED' || err.code === 'ORDER_NOT_APPROVED';
+    if (req.method === 'GET' && (url.pathname === '/gift/return' || url.pathname === '/gift/cancel')) {
+      // A browser navigation, not an API call: send the donor to a readable
+      // page instead of raw JSON. Nothing was captured or logged.
+      res.writeHead(302, { Location: `/?gift=error&reason=${encodeURIComponent(err.message)}` });
+      return res.end();
+    }
+    json(res, unprocessable ? 422 : 400, { error: err.message, code: err.code ?? null });
   }
 });
 
