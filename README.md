@@ -62,6 +62,16 @@ Without credentials it fails loudly with `PayPalNotConfiguredError` — never
 silently falls back. No live (production) PayPal endpoint is referenced
 anywhere in this codebase; this project is sandbox-only for life.
 
+Sandbox gifts follow PayPal's real Checkout approval flow: creating an
+order does not take money. The donor is redirected to PayPal's hosted
+approval page, approves there, and PayPal returns them to
+`/gift/return` — only then does the app capture the order, and only a
+successful capture is written to the log. Set `PUBLIC_BASE_URL` to the
+app's public URL on hosted deployments so the return lands in the right
+place (see `.env.example`); locally the server derives it per request.
+The mock adapter simulates payer approval instantly, so the local demo
+stays one click.
+
 ## Architecture
 
 ```
