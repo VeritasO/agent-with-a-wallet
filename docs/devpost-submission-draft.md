@@ -88,8 +88,11 @@ edit afterwards.
 
 ## What's next
 [After the sandbox pass:] the same flow running end-to-end against the
-real PayPal sandbox (checkout order → capture → payout), then the demo
-video. Longer term: the treasury discipline this productizes keeps running
+real PayPal sandbox (checkout order → payer approval on PayPal's hosted
+page → capture on return → payout), then the demo video. (The approval
+step is real: the first live attempt on 2026-11-09 failed with PayPal's
+422 ORDER_NOT_APPROVED because the original flow tried to capture before
+approval; the repaired flow is in `docs/sandbox-flow-repair-20261109.md`.) Longer term: the treasury discipline this productizes keeps running
 in the real system — the hackathon entry is its public, inspectable proof.
 
 ## Built with
