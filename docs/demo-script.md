@@ -17,12 +17,22 @@ PayPal mode clearly labelled on screen as SANDBOX throughout.
 **0:20–1:10 — A gift comes in**
 - Visual: gift page `/`. Camera lingers on the terms text. Cursor checks the
   attestation box, sends a $200 sandbox gift.
-- Cut to `/log`: the entry appears, hash-chained.
+- **Sandbox approval detour (added 2026-11-09, after the live 422 — see
+  `docs/sandbox-flow-repair-20261109.md`):** a real Checkout order is not
+  paid when it is created. The page now redirects the donor to PayPal's
+  sandbox approval page; the donor signs in as the sandbox *personal*
+  (buyer) test account, approves, and PayPal returns them to the app —
+  only then does the app capture the order. Nothing is in the log before
+  that return; the balance is still $0.00 while approval is pending.
+  Film it as one continuous beat: gift form → PayPal approve → return.
+- Cut to `/log`: the entry appears, hash-chained (it exists only because
+  the capture after approval succeeded).
 - VO: “Money in is a gift. Never an investment — nothing promised back but
   thanks, and not tax-deductible. Those aren't disclaimers under the form.
   Watch: without this attestation, the code refuses the gift.”
 - Insert (5s): resubmit with the box unchecked → the refusal message on
-  screen.
+  screen. (This beat is unchanged by the approval flow: the refusal fires
+  on our server before any PayPal order exists.)
 
 **1:10–1:45 — The agent spends, alone, inside the lines**
 - Visual: console `/console`. Agent requests $12 for AI credits → executes
